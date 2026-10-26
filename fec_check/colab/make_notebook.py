@@ -46,24 +46,26 @@ os.makedirs(OUT, exist_ok=True)
 """),
     code("""
 !python fec_gpu.py selftest
-!python fec_gpu.py staircase --p 0.005 --units 2560 --batch 256 --out {OUT}/bench.jsonl
+!python fec_gpu.py staircase --lock_first --p 0.005 --units 2560 --batch 256 --out {OUT}/bench.jsonl
 !python fec_gpu.py product --p 0.0065 --units 16384 --batch 512 --out {OUT}/bench.jsonl
 """),
     md("""
 ## 2. 본 실행 A: staircase 부호 (가장 중요)
 - 대상: Holzbaur et al. 2019, 4.2절 부호. 255×255 블록, [510,491] 성분부호, 창 크기 W = 7.
+- 복호기: `--lock_first`. 창의 첫 블록과 직전 출력 블록이 이루는 행도 다시 복호하되, 출력 블록 자체는 고치지 않습니다.
+  - 이 설정이 없으면 일정 구조 때문에 무게 1–3짜리 잔여 오류가 생겨 BER이 약 10배 나빠집니다(CPU 예비 실험).
 - 목적: 논문의 "p = 5×10⁻³에서 오류 바닥 약 2×10⁻¹⁰, ξ = 1.6×10⁻³"을 재현하는지, 그리고 낮은 p에서 상수 ξ 모델이 맞는지 확인합니다.
 - p 값은 앞에 둔 것부터 실행됩니다. 중간에 멈춰도 그때까지의 결과는 저장됩니다.
 """),
     code("""
-!python fec_gpu.py staircase --p 0.005 0.0048 0.0046 --units 1000000 --batch 256 --out {OUT}/staircase_W7.jsonl
+!python fec_gpu.py staircase --lock_first --p 0.005 0.0048 0.0046 --units 1000000 --batch 256 --out {OUT}/staircase_W7.jsonl
 """),
     md("""
-### (선택) 창 크기 W = 10
-같은 p에서 복호기 설정에 따라 결과가 얼마나 달라지는지 봅니다.
+### (선택) 논문 문구 그대로의 복호기 (`--lock_first` 없음)
+같은 p에서 복호기 일정에 따라 결과가 얼마나 달라지는지 봅니다.
 """),
     code("""
-!python fec_gpu.py staircase --p 0.005 --units 300000 --batch 256 --W 10 --out {OUT}/staircase_W10.jsonl
+!python fec_gpu.py staircase --p 0.005 --units 200000 --batch 256 --out {OUT}/staircase_W7_strict.jsonl
 """),
     md("""
 ## 3. 본 실행 B: [256,239,6]² 제품부호
