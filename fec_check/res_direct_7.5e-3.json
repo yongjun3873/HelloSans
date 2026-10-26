@@ -1,0 +1,24 @@
+{
+ "actual": {
+  "frames": 120000,
+  "frame_errors": 5,
+  "FER": 4.1666666666666665e-05,
+  "BER": 5.7220458984375e-09,
+  "residual_weights": [
+   9,
+   9,
+   9,
+   9,
+   9
+  ]
+ },
+ "ref": {
+  "frames": 120000,
+  "frame_errors": 1,
+  "FER": 8.333333333333334e-06,
+  "BER": 1.1444091796875e-09,
+  "residual_weights": [
+   9
+  ]
+ }
+}
