@@ -77,13 +77,15 @@ def family_contrib(k, p, nsamp, B=32):
 
 def direct(p, nframes, B=64):
     st = {"actual": [0, 0], "ref": [0, 0]}
+    resw = {"actual": [], "ref": []}
     for _ in range(nframes // B):
         E = (rng.random((B, n, n)) < p).astype(np.uint8)
         for kind in st:
             F = E.copy(); decode(F, kind, 10); res = F.reshape(B, -1).sum(1)
             st[kind][0] += int((res > 0).sum()); st[kind][1] += int(res.sum())
+            resw[kind] += [int(x) for x in res[res > 0]]
     nf = (nframes // B) * B
-    return {kind: {"frames": nf, "frame_errors": v[0], "FER": v[0] / nf, "BER": v[1] / (nf * N)} for kind, v in st.items()}
+    return {kind: {"frames": nf, "frame_errors": v[0], "FER": v[0] / nf, "BER": v[1] / (nf * N), "residual_weights": resw[kind]} for kind, v in st.items()}
 
 if __name__ == "__main__":
     mode = sys.argv[1]
