@@ -60,14 +60,16 @@ class BCH2:
         kk = ka[ia, ib]
         assert not found[kk].any() and len(np.unique(kk)) == len(kk), "syndrome collision"
         found[kk] = True; T1[kk] = ia; T2[kk] = ib
-        self.H = xp.asarray(H)
+        # fp16 on GPU (tensor cores): row sums <= 512 and keys < 2^19 handled below are exact
+        self.ft = xp.float16 if GPU else xp.float32
+        self.H = xp.asarray(H).astype(self.ft)
         self.pow2 = xp.asarray((1 << np.arange(self.nb)).astype(np.float32))
         self.T1, self.T2, self.FOUND = xp.asarray(T1), xp.asarray(T2), xp.asarray(found)
 
     def keys(self, W):
         """W: (..., L) uint8 words -> integer syndrome keys (...)."""
-        s = xp.matmul(W.astype(xp.float32), self.H)
-        s = xp.remainder(s, 2.0)
+        s = xp.matmul(W.astype(self.ft), self.H)
+        s = xp.remainder(s.astype(xp.float32), 2.0)
         return xp.matmul(s, self.pow2).astype(xp.int64)
 
 
@@ -105,12 +107,22 @@ def product_decode(E, comp, kind, max_sweeps=10):
     return E
 
 
-def run_product(p, frames, batch=256, seed=0, max_sweeps=10, out_path=None, capture=True, flush_frames=65536):
+class _HostRNG:
+    """numpy RNG whose samples are moved to the device: identical error patterns on CPU and GPU (used by selftest)."""
+    def __init__(self, seed):
+        self.rs = np.random.RandomState(seed)
+
+    def random_sample(self, shape):
+        return xp.asarray(self.rs.random_sample(shape))
+
+
+def run_product(p, frames, batch=256, seed=0, max_sweeps=10, out_path=None, capture=True, flush_frames=65536,
+                host_rng=False):
     """Direct MC for the [256,239,6]^2 product code. Appends one JSON line per ~flush_frames frames to out_path
     (checkpointing). Failed frames (up to 20 per line) are stored with their initial and final error positions."""
     comp = BCH2(8, 256)
     n = 256
-    rs = xp.random.RandomState(seed)
+    rs = _HostRNG(seed) if host_rng else xp.random.RandomState(seed)
     t0 = time.time()
     kinds = ("actual", "ref")
 
@@ -190,7 +202,7 @@ def staircase_group_decode(Lb, Rb, comp, kind, lock_left=False):
 
 
 def run_staircase(p, out_blocks, streams=256, W=7, v_max=10, seed=0, out_path=None, chunk_steps=50, warmup=None,
-                  lock_first=False):
+                  lock_first=False, host_rng=False):
     """Direct MC for the staircase code with M=255 and the [510,491] shortened extended BCH component
     (Holzbaur et al., Sec. 4.2 parameters), sliding-window decoder.
 
@@ -203,7 +215,7 @@ def run_staircase(p, out_blocks, streams=256, W=7, v_max=10, seed=0, out_path=No
     One JSON line is appended to out_path every chunk_steps window positions (checkpointing)."""
     M = 255
     comp = BCH2(9, 2 * M)
-    rs = xp.random.RandomState(seed)
+    rs = _HostRNG(seed) if host_rng else xp.random.RandomState(seed)
     warmup = W if warmup is None else warmup
     t0 = time.time()
     kinds = ("actual", "ref")
@@ -216,16 +228,28 @@ def run_staircase(p, out_blocks, streams=256, W=7, v_max=10, seed=0, out_path=No
     def fresh():
         return {k: {"block_errors": 0, "residual_bits": 0, "residual_weights": []} for k in kinds}
 
+    # Group j = [B^T_j B_{j+1}] of the window list. A group decoded with no later change to its two blocks is a fixed
+    # point (all its words are codewords, or weight >= 3 for ref), so it is skipped until a neighbour changes one of
+    # its blocks. This gives exactly the same result as re-decoding every group in every pass.
+    j0 = 0 if lock_first else 1
+    dirty = {k: [True] * W for k in kinds}
     stats = fresh(); produced = 0; step = 0; chunk_units = 0
     while produced < out_blocks:
         for k in kinds:
-            blocks = win[k]
+            blocks, d = win[k], dirty[k]
             for _ in range(v_max):
-                ch = 0
-                for j in range(0 if lock_first else 1, W):
-                    ch += staircase_group_decode(blocks[j], blocks[j + 1], comp, k, lock_left=(j == 0))
-                if ch == 0:
+                if not any(d[j0:]):
                     break
+                for j in range(j0, W):
+                    if not d[j]:
+                        continue
+                    d[j] = False
+                    if staircase_group_decode(blocks[j], blocks[j + 1], comp, k, lock_left=(j == 0)):
+                        if j > j0:
+                            d[j - 1] = True
+                        if j + 1 < W:
+                            d[j + 1] = True
+            dirty[k] = d[1:] + [True]
         step += 1
         if step > warmup:
             for k in kinds:
@@ -270,11 +294,38 @@ def summarize(path):
     return out
 
 
+# ---------------------------------------------------------------- self-test
+# Reference numbers produced with the numpy path (same host-generated errors); a GPU run must reproduce them exactly.
+SELFTEST_EXPECTED = {'product256/actual': [64, 35844], 'product256/ref': [29, 5774],
+                     'staircase255_510/actual': [64, 23171], 'staircase255_510/ref': [64, 12888]}
+
+
+def selftest():
+    import tempfile
+    got = {}
+    with tempfile.TemporaryDirectory() as d:
+        f = os.path.join(d, "t.jsonl")
+        run_product(0.0125, 64, batch=32, seed=1, out_path=f, capture=False, host_rng=True)
+        run_staircase(0.0068, 64, streams=16, W=7, v_max=10, seed=1, out_path=f, chunk_steps=2, host_rng=True)
+        for line in open(f):
+            r = json.loads(line)
+            for k in ("actual", "ref"):
+                key = f'{r["code"]}/{k}'
+                e = r[k].get("frame_errors", r[k].get("block_errors"))
+                a = got.setdefault(key, [0, 0]); a[0] += e; a[1] += r[k]["residual_bits"]
+    print("selftest", got)
+    if SELFTEST_EXPECTED is not None:
+        ok = got == SELFTEST_EXPECTED
+        print("SELFTEST", "PASSED" if ok else f"FAILED (expected {SELFTEST_EXPECTED})")
+        if not ok:
+            raise SystemExit(1)
+
+
 # ---------------------------------------------------------------- command line
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("code", choices=["product", "staircase", "summary"])
+    ap.add_argument("code", choices=["product", "staircase", "summary", "selftest"])
     ap.add_argument("--p", type=float, nargs="+", default=[])
     ap.add_argument("--units", type=int, default=1_000_000, help="frames (product) or delivered blocks (staircase)")
     ap.add_argument("--batch", type=int, default=256, help="frames per batch (product) or parallel streams (staircase)")
@@ -285,7 +336,9 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="results.jsonl")
     a = ap.parse_args()
     print("GPU" if GPU else "CPU (numpy)", flush=True)
-    if a.code == "summary":
+    if a.code == "selftest":
+        selftest()
+    elif a.code == "summary":
         for row in summarize(a.out):
             print(row)
     for p in a.p:
