@@ -42,3 +42,21 @@ J. Justesen, "Performance of Product Codes and Related Structures with Iterated 
    - 실제 iBDD의 **유한 p 엄밀 상하한**
    - c₁의 우선권은 Smith 2012, Truhachev ISIT 2016, Miao–Schmalen 2026과의 대조가 아직 남아 있다.
 3. 미확인 원문: Truhachev 외 ISIT 2016, Pan–Zhao TCOM 2026.
+
+---
+
+# 문헌 대조: Truhachev–Karami–Zhang–Kschischang, ISIT 2016
+
+D. Truhachev, A. Karami, L. Zhang, F. Kschischang, "Decoding Analysis Accounting for Mis-Corrections for Spatially-Coupled Split-Component Codes," ISIT 2016. DOI 10.1109/ISIT.2016.7541674.
+
+**확인 수준:** 사용자가 제공한 PDF의 본문 전체를 확인했다(2026-10-29).
+
+| 항목 | 내용 | 우리 목표와의 관계 |
+|---|---|---|
+| 대상 | 공간 결합 split-component **앙상블**(staircase 포함). 정정과 오수정의 흐름을 모델링한다. | 우리 대상은 고정 부호(제품부호)다. |
+| 결과 | **점근 반복 복호 문턱값**의 추정과 상계(p̄_mis-corr). 표에서 시뮬레이션 문턱값과 비교한다. | 우리 결과는 **오류 바닥 영역**의 유한 p BER이다. |
+| 가정 | 앙상블의 Poisson 차수 분포, 독립성 근사. 오수정으로 간선이 추가되는 경우는 세지 않는다고 명시한다. | 유한 길이 바닥 사건(core 생성)은 다루지 않는다. |
+
+**결론:** 워터폴과 문턱값에 대한 점근 분석이다. 오류 바닥, 유한 길이, BER 상하한, 첫 보정 계수 c₁ 중 **어느 것도 선점하지 않는다.** 서론에서 "오수정을 포함한 문턱값 분석"의 선행 연구로 인용하면 된다.
+
+**남은 미확인 원문:** Pan–Zhao, TCOM 2026 (DOI 10.1109/TCOMM.2026.3693192).
